@@ -89,6 +89,7 @@ export async function run() {
     const globber = await glob.create(pathToLcov)
 
     for await (const filePath of globber.globGenerator()) {
+      console.log(`Using lcov file: ${filePath}`);
       let file;
 
       try {
