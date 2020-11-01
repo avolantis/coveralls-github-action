@@ -6,7 +6,7 @@ inputs:
   github-token:
     required: true
   path-to-lcov:
-    description: 'Path to lcov file'
+    description: 'Path to lcov file (supports globs)'
     required: true
     default: './coverage/lcov.info'
   flag-name:

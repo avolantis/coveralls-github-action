@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@actions/core": "^1.2.4",
+    "@actions/glob": "^0.1.0",
     "@actions/exec": "^1.0.4",
     "coveralls": "^3.0.13",
     "request": "^2.88.0"
