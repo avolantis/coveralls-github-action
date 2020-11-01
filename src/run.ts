@@ -1,7 +1,7 @@
 import * as core from '@actions/core';
+import * as glob from '@actions/glob';
 
 import fs from 'fs';
-import path from 'path';
 import request, { Response } from 'request';
 import { adjustLcovBasePath } from './lcov-processor';
 
@@ -84,27 +84,31 @@ export async function run() {
       throw new Error("No Lcov path specified.");
     }
 
-    console.log(`Using lcov file: ${pathToLcov}`);
+    console.log(`Using lcov file(s): ${pathToLcov}`);
 
-    let file;
+    const globber = await glob.create(pathToLcov)
 
-    try {
-      file = fs.readFileSync(pathToLcov, 'utf8');
-    } catch (err) {
-      throw new Error("Lcov file not found.");
-    }
+    for await (const filePath of globber.globGenerator()) {
+      let file;
 
-
-    const basePath = core.getInput('base-path');
-    const adjustedFile = basePath ? adjustLcovBasePath(file, basePath) : file;
-
-    coveralls.handleInput(adjustedFile, (err: string, body: string) => {
-      if(err){
-        core.setFailed(err);
-      } else {
-        core.setOutput('coveralls-api-result', body);
+      try {
+        file = fs.readFileSync(filePath, 'utf8');
+      } catch (err) {
+        throw new Error("Lcov file not found.");
       }
-    });
+
+
+      const basePath = core.getInput('base-path');
+      const adjustedFile = basePath ? adjustLcovBasePath(file, basePath) : file;
+
+      coveralls.handleInput(adjustedFile, (err: string, body: string) => {
+        if(err){
+          core.setFailed(err);
+        } else {
+          core.setOutput('coveralls-api-result', body);
+        }
+      });
+    }
 
   } catch (error) {
     core.setFailed(error.message);
