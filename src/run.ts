@@ -13,6 +13,34 @@ interface WebhookResult {
     errored: boolean;
 }
 
+function sendParalellWebhook(githubToken: string, runId?: string): void {
+  const payload = {
+    "repo_token": githubToken,
+    "repo_name": process.env.GITHUB_REPOSITORY,
+    "payload": { "build_num": runId, "status": "done" }
+  };
+
+  request.post({
+                 url: `${process.env.COVERALLS_ENDPOINT || 'https://coveralls.io'}/webhook`,
+                 body: payload,
+                 json: true
+               }, (error: string, _response: Response, data: WebhookResult) => {
+                 if (error) {
+                   throw new Error(error);
+                 }
+                 try {
+                   if (data.done && (!process.env.NO_STATUS_API || process.env.NO_STATUS_API != '')) {
+                     core.setOutput('coveralls-api-result', JSON.stringify(data));
+                   } else {
+                     throw new Error(JSON.stringify(data));
+                   }
+                 } catch(err) {
+                   throw new Error('Parallel webhook error:' + err + ', ' + JSON.stringify(data));
+                 }
+               }
+  );
+}
+
 export async function run() {
   try {
     const githubToken = core.getInput('github-token');
@@ -27,6 +55,7 @@ export async function run() {
     process.env.COVERALLS_GIT_COMMIT = process.env.GITHUB_SHA!.toString();
     process.env.COVERALLS_GIT_BRANCH = process.env.GITHUB_REF!.toString();
     process.env.COVERALLS_FLAG_NAME = process.env.COVERALLS_FLAG_NAME || core.getInput('flag-name');
+    process.env.NO_STATUS_API = process.env.NO_STATUS_API || core.getInput('use-status-api');
 
     const event = fs.readFileSync(process.env.GITHUB_EVENT_PATH!, 'utf8');
 
@@ -48,35 +77,9 @@ export async function run() {
     process.env.COVERALLS_SERVICE_JOB_ID = runId;
 
     if(core.getInput('parallel-finished') != '') {
-      const payload = {
-        "repo_token": githubToken,
-        "repo_name": process.env.GITHUB_REPOSITORY,
-        "payload": { "build_num": runId, "status": "done" }
-      };
-
-      request.post({
-        url: `${process.env.COVERALLS_ENDPOINT || 'https://coveralls.io'}/webhook`,
-        body: payload,
-        json: true
-      }, (error: string, _response: Response, data: WebhookResult) => {
-          if (error) {
-            throw new Error(error);
-          }
-          try {
-            if (data.done) {
-              core.setOutput('coveralls-api-result', JSON.stringify(data));
-            } else {
-              throw new Error(JSON.stringify(data));
-            }
-          } catch(err) {
-            throw new Error('Parallel webhook error:' + err + ', ' + JSON.stringify(data));
-          }
-        }
-      )
+      sendParalellWebhook(githubToken, runId);
       return 0;
     }
-
-    process.env.COVERALLS_PARALLEL = process.env.COVERALLS_PARALLEL || core.getInput('parallel');
 
     const pathToLcov = core.getInput('path-to-lcov');
 
@@ -86,18 +89,27 @@ export async function run() {
 
     console.log(`Using lcov file(s): ${pathToLcov}`);
 
-    const globber = await glob.create(pathToLcov)
+    const matcher = await glob.create(pathToLcov);
+    const files = await matcher.glob();
 
-    for await (const filePath of globber.globGenerator()) {
+    if (files.length < 1) {
+      throw new Error("No lcov file found.");
+    }
+
+    const multi = (files.length > 1).toString();
+    process.env.COVERALLS_PARALLEL = multi || process.env.COVERALLS_PARALLEL || core.getInput('parallel');
+
+    for (let i = 0; i < files.length; i++) {
+      const filePath = files[i];
+
       console.log(`Using lcov file: ${filePath}`);
       let file;
 
       try {
         file = fs.readFileSync(filePath, 'utf8');
       } catch (err) {
-        throw new Error("Lcov file not found.");
+        throw new Error(`Error reading lcov file at ${filePath}`);
       }
-
 
       const basePath = core.getInput('base-path');
       const adjustedFile = basePath ? adjustLcovBasePath(file, basePath) : file;
@@ -105,10 +117,14 @@ export async function run() {
       coveralls.handleInput(adjustedFile, (err: string, body: string) => {
         if(err){
           core.setFailed(err);
-        } else {
+        } else if (!process.env.NO_STATUS_API || process.env.NO_STATUS_API != '') {
           core.setOutput('coveralls-api-result', body);
         }
       });
+    }
+
+    if (multi) {
+      sendParalellWebhook(githubToken, runId);
     }
 
   } catch (error) {
